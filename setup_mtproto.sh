@@ -6,12 +6,9 @@
 #   sudo bash setup_mtproto.sh <домен_или_ip> [порт] [порт_статистики]
 #
 # ПРИМЕРЫ:
-#   sudo bash setup_mtproto.sh mydomain.ru          # порты по умолчанию
-#   sudo bash setup_mtproto.sh mydomain.ru 2083     # свой порт
+#   sudo bash setup_mtproto.sh mydomain.com          # порты по умолчанию
+#   sudo bash setup_mtproto.sh mydomain.com 2083     # свой порт
 #   sudo bash setup_mtproto.sh 1.2.3.4              # без домена, только по IP
-#
-# ВАЖНО: Если у тебя нет домена — просто передай IP-адрес сервера.
-#         Маскировка FakeTLS будет использовать google.com автоматически.
 # ==============================================================================
 
 set -euo pipefail
@@ -21,7 +18,7 @@ set -euo pipefail
 # ------------------------------------------------------------------------------
 if [[ $# -lt 1 ]]; then
   echo "Использование: sudo bash $0 <домен_или_ip> [порт] [порт_статистики]"
-  echo "Пример:        sudo bash $0 mydomain.ru 2083 3129"
+  echo "Пример:            sudo bash $0 mydomain.com 2083 3129"
   echo "Пример без домена: sudo bash $0 1.2.3.4 2083 3129"
   exit 1
 fi
@@ -35,7 +32,7 @@ SECRET_FILE="$CONFIG_DIR/secret.txt"
 
 # ------------------------------------------------------------------------------
 # Определяем: домен или IP
-# Если передан IP — FakeTLS маскируется под google.com (клиентам не важно)
+# Если передан IP — FakeTLS маскируется под google.com
 # ------------------------------------------------------------------------------
 if [[ "$DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   IS_IP=true
@@ -93,7 +90,6 @@ if [[ -z "$SECRET" ]]; then
 fi
 echo "      Секрет: $SECRET"
 
-# Сохраняем секрет в файл — пригодится при восстановлении
 mkdir -p "$CONFIG_DIR"
 echo "$SECRET" > "$SECRET_FILE"
 chmod 600 "$SECRET_FILE"
@@ -101,8 +97,8 @@ echo "      Секрет сохранён в $SECRET_FILE"
 
 # ------------------------------------------------------------------------------
 # Шаг 4/7 — Конфигурация
-# ВАЖНО: stats bind-to = 0.0.0.0 внутри контейнера,
-#        снаружи доступ ограничен через -p 127.0.0.1:STATS_PORT
+# stats bind-to = 0.0.0.0 внутри контейнера (не 127.0.0.1 — иначе недоступно)
+# снаружи доступ ограничен через -p 127.0.0.1:STATS_PORT
 # ------------------------------------------------------------------------------
 echo "[4/7] Запись конфига в $CONFIG_FILE..."
 cat > "$CONFIG_FILE" <<EOF
@@ -118,7 +114,6 @@ echo "      Конфиг записан ✓"
 
 # ------------------------------------------------------------------------------
 # Шаг 5/7 — Запуск контейнера
-# Останавливаем старый, если был (например при переустановке)
 # ------------------------------------------------------------------------------
 echo "[5/7] Запуск контейнера mtg..."
 docker stop mtg 2>/dev/null && docker rm mtg 2>/dev/null || true
@@ -132,7 +127,6 @@ docker run -d \
   nineseconds/mtg:2 \
   run /config.toml
 
-# Ждём запуска (до 15 секунд)
 echo "      Ожидаем запуска контейнера..."
 STARTED=false
 for i in {1..15}; do
@@ -152,29 +146,119 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# Шаг 6/7 — Firewall (UFW)
-# Если используется другой файрвол (iptables, nftables) — настрой вручную
+# Шаг 6/7 — Статистика
 # ------------------------------------------------------------------------------
-echo "[6/7] Настройка UFW..."
-if command -v ufw &>/dev/null; then
-  ufw allow "$PORT/tcp" comment 'MTProto Telegram'
-  ufw reload
-  echo "      Порт $PORT открыт в UFW ✓"
-else
-  echo "      UFW не найден. Открой порт вручную:"
-  echo "      iptables -A INPUT -p tcp --dport $PORT -j ACCEPT"
-fi
-
-# ------------------------------------------------------------------------------
-# Шаг 7/7 — Проверка статистики
-# ------------------------------------------------------------------------------
-echo "[7/7] Проверка endpoint статистики..."
+echo "[6/7] Проверка endpoint статистики..."
 sleep 3
 if curl -s --max-time 5 "http://127.0.0.1:$STATS_PORT/" | grep -q "mtg"; then
   echo "      Статистика работает ✓"
 else
-  echo "      Статистика пока недоступна (это нормально — попробуй через минуту):"
+  echo "      Статистика пока недоступна (попробуй через минуту):"
   echo "      curl http://127.0.0.1:$STATS_PORT/"
+fi
+
+# ------------------------------------------------------------------------------
+# Шаг 7/7 — Firewall и безопасность
+# ------------------------------------------------------------------------------
+echo ""
+echo "[7/7] Проверка безопасности и firewall..."
+echo ""
+
+# --- UFW ---
+echo "  ▶ UFW Firewall:"
+UFW_ACTIVE=false
+if ! command -v ufw &>/dev/null; then
+  echo "    ✗ UFW не установлен"
+  UFW_ACTIVE=false
+else
+  UFW_STATUS=$(ufw status | head -1)
+  if echo "$UFW_STATUS" | grep -q "inactive"; then
+    echo "    ⚠ UFW установлен, но ВЫКЛЮЧЕН"
+    UFW_ACTIVE=false
+  else
+    echo "    ✓ UFW активен"
+    UFW_ACTIVE=true
+  fi
+fi
+
+# --- SSH порт ---
+SSH_PORT=$(ss -tlnp | grep sshd | awk '{print $4}' | awk -F: '{print $NF}' | head -1)
+SSH_PORT="${SSH_PORT:-22}"
+
+# --- 3x-ui ---
+echo ""
+echo "  ▶ 3x-ui:"
+XUI_FOUND=false
+XUI_PORTS=()
+
+if systemctl is-active --quiet x-ui 2>/dev/null; then
+  XUI_FOUND=true
+  echo "    ✓ 3x-ui запущен (systemd)"
+fi
+
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qiE "x-ui|3x-ui|xui"; then
+  XUI_FOUND=true
+  echo "    ✓ 3x-ui запущен (Docker)"
+fi
+
+if [[ "$XUI_FOUND" == true ]]; then
+  mapfile -t XUI_PORTS < <(
+    ss -tlnp | grep -E "x-ui|xui" | awk '{print $4}' | awk -F: '{print $NF}' | sort -un
+  )
+  if [[ -f /usr/local/x-ui/bin/config.json ]]; then
+    mapfile -t CFG_PORTS < <(grep -oP '"port"\s*:\s*\K[0-9]+' /usr/local/x-ui/bin/config.json | sort -un)
+    XUI_PORTS+=("${CFG_PORTS[@]}")
+  fi
+  mapfile -t XUI_PORTS < <(printf '%s\n' "${XUI_PORTS[@]}" | sort -un)
+
+  if [[ ${#XUI_PORTS[@]} -gt 0 ]]; then
+    echo "    → Обнаруженные порты 3x-ui: ${XUI_PORTS[*]}"
+  else
+    echo "    ⚠ Порты 3x-ui не определены автоматически"
+    echo "    → Проверь вручную: ss -tlnp | grep x-ui"
+  fi
+else
+  echo "    – 3x-ui не обнаружен"
+fi
+
+# --- Применяем / выводим правила UFW ---
+echo ""
+echo "  ▶ Правила UFW:"
+
+if [[ "$UFW_ACTIVE" == false ]]; then
+  echo ""
+  echo "    UFW неактивен. Готовые команды — скопируй и выполни блоком:"
+  echo ""
+  echo "    ┌────────────────────────────────────────────────────────────"
+  echo "    ufw default deny incoming"
+  echo "    ufw default allow outgoing"
+  echo "    ufw allow $SSH_PORT/tcp comment 'SSH'"
+  echo "    ufw allow $PORT/tcp comment 'MTProto Telegram'"
+  for xport in "${XUI_PORTS[@]}"; do
+    echo "    ufw allow $xport/tcp comment '3x-ui'"
+  done
+  echo "    ufw --force enable"
+  echo "    ufw status verbose"
+  echo "    └────────────────────────────────────────────────────────────"
+  echo ""
+  echo "    ⚠  ВНИМАНИЕ: перед включением UFW убедись, что SSH порт"
+  echo "       $SSH_PORT открыт — иначе потеряешь доступ к серверу!"
+else
+  ufw allow "$SSH_PORT/tcp" comment 'SSH' 2>/dev/null || true
+  echo "    ✓ SSH порт $SSH_PORT — добавлен"
+
+  ufw allow "$PORT/tcp" comment 'MTProto Telegram' 2>/dev/null || true
+  echo "    ✓ MTProto порт $PORT — добавлен"
+
+  for xport in "${XUI_PORTS[@]}"; do
+    ufw allow "$xport/tcp" comment '3x-ui' 2>/dev/null || true
+    echo "    ✓ 3x-ui порт $xport — добавлен"
+  done
+
+  ufw reload
+  echo ""
+  echo "    Текущие правила UFW:"
+  ufw status numbered | grep -v "^$" | head -30
 fi
 
 # ------------------------------------------------------------------------------
@@ -209,9 +293,9 @@ echo ""
 echo "  Мониторинг в реальном времени:"
 echo "  watch -n 2 'curl -s http://127.0.0.1:$STATS_PORT/ | grep -E \"connections|traffic\"'"
 echo ""
-echo "  Перезапуск прокси:"
-echo "  docker restart mtg"
+echo "  Перезапуск прокси:  docker restart mtg"
+echo "  Логи:               docker logs -f mtg"
 echo ""
-echo "  Логи:"
-echo "  docker logs -f mtg"
+echo "  ⚠  Если коннекта нет — проверь внешний firewall у провайдера VDS:"
+echo "     порт $PORT/tcp должен быть открыт в панели управления сервером."
 echo "============================================================"
