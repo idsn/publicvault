@@ -13,13 +13,15 @@
 ### Вариант 1 — Есть домен
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/idsn/publicvault/9f530db6f937d24c958012f5a013bed4ebc294b0/setup_mtproto.sh | sudo bash -s -- yourdomain.com
+curl -fsSL https://raw.githubusercontent.com/idsn/publicvault/main/setup_mtproto.sh | sudo bash -s -- yourdomain.com
+
 ```
 
 ### Вариант 2 — Только IP (домена нет)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/idsn/publicvault/9f530db6f937d24c958012f5a013bed4ebc294b0/setup_mtproto.sh | sudo bash -s -- $(curl -s ifconfig.me)
+curl -fsSL https://raw.githubusercontent.com/idsn/publicvault/main/setup_mtproto.sh | sudo bash -s -- $(curl -s ifconfig.me | tr -d '[:space:]')
+
 ```
 
 > Замени `yourdomain.com` на свой домен, либо используй второй вариант — скрипт сам определит IP сервера.
@@ -30,7 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/idsn/publicvault/9f530db6f937d24c95
 
 ```bash
 # 1. Скачай скрипт
-wget -O setup_mtproto.sh https://raw.githubusercontent.com/idsn/publicvault/9f530db6f937d24c958012f5a013bed4ebc294b0/setup_mtproto.sh
+wget -O setup_mtproto.sh https://raw.githubusercontent.com/idsn/publicvault/main/setup_mtproto.sh
 
 # 2. Дай права на выполнение
 chmod +x setup_mtproto.sh
