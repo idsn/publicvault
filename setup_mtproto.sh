@@ -8,7 +8,7 @@
 # ПРИМЕРЫ:
 #   sudo bash setup_mtproto.sh mydomain.com          # порты по умолчанию
 #   sudo bash setup_mtproto.sh mydomain.com 2083     # свой порт
-#   sudo bash setup_mtproto.sh 1.2.3.4              # без домена, только по IP
+#   sudo bash setup_mtproto.sh 1.2.3.4               # без домена, только по IP
 # ==============================================================================
 
 set -euo pipefail
@@ -169,12 +169,10 @@ echo "  ▶ UFW Firewall:"
 UFW_ACTIVE=false
 if ! command -v ufw &>/dev/null; then
   echo "    ✗ UFW не установлен"
-  UFW_ACTIVE=false
 else
   UFW_STATUS=$(ufw status | head -1)
   if echo "$UFW_STATUS" | grep -q "inactive"; then
     echo "    ⚠ UFW установлен, но ВЫКЛЮЧЕН"
-    UFW_ACTIVE=false
   else
     echo "    ✓ UFW активен"
     UFW_ACTIVE=true
@@ -207,9 +205,9 @@ if [[ "$XUI_FOUND" == true ]]; then
   )
   if [[ -f /usr/local/x-ui/bin/config.json ]]; then
     mapfile -t CFG_PORTS < <(grep -oP '"port"\s*:\s*\K[0-9]+' /usr/local/x-ui/bin/config.json | sort -un)
-    XUI_PORTS+=("${CFG_PORTS[@]}")
+    XUI_PORTS+=("${CFG_PORTS[@]+"${CFG_PORTS[@]}"}")
   fi
-  mapfile -t XUI_PORTS < <(printf '%s\n' "${XUI_PORTS[@]}" | sort -un)
+  mapfile -t XUI_PORTS < <(printf '%s\n' "${XUI_PORTS[@]+"${XUI_PORTS[@]}"}" | sort -un)
 
   if [[ ${#XUI_PORTS[@]} -gt 0 ]]; then
     echo "    → Обнаруженные порты 3x-ui: ${XUI_PORTS[*]}"
@@ -234,7 +232,7 @@ if [[ "$UFW_ACTIVE" == false ]]; then
   echo "    ufw default allow outgoing"
   echo "    ufw allow $SSH_PORT/tcp comment 'SSH'"
   echo "    ufw allow $PORT/tcp comment 'MTProto Telegram'"
-  for xport in "${XUI_PORTS[@]}"; do
+  for xport in "${XUI_PORTS[@]+"${XUI_PORTS[@]}"}"; do
     echo "    ufw allow $xport/tcp comment '3x-ui'"
   done
   echo "    ufw --force enable"
@@ -250,7 +248,7 @@ else
   ufw allow "$PORT/tcp" comment 'MTProto Telegram' 2>/dev/null || true
   echo "    ✓ MTProto порт $PORT — добавлен"
 
-  for xport in "${XUI_PORTS[@]}"; do
+  for xport in "${XUI_PORTS[@]+"${XUI_PORTS[@]}"}"; do
     ufw allow "$xport/tcp" comment '3x-ui' 2>/dev/null || true
     echo "    ✓ 3x-ui порт $xport — добавлен"
   done
